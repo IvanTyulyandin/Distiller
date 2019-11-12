@@ -1,5 +1,6 @@
 module Term where
 
+import Prelude hiding ((<>))
 import Data.Char
 import Data.Maybe
 import Data.List

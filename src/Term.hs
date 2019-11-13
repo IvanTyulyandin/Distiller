@@ -3,12 +3,14 @@ module Term where
 import Control.Monad
 import Data.Char
 import Data.Foldable
+import Data.Functor.Identity
 import Data.List
 import Data.Maybe
 import Debug.Trace
 import Prelude hiding ((<>))
 import System.Directory
 import System.IO
+import Text.Parsec.Prim
 import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
@@ -37,6 +39,7 @@ showProg p = render $ prettyProg p
 instance Eq Term where
         (==) t t' = eqTerm [] [] (t, t')
 
+eqTerm :: [(String, Term)] -> [(String, Term)] -> (Term, Term) -> Bool
 eqTerm s1 s2 (Free x, t)
   | x `elem` fst (unzip s1) =
     eqTerm [] [] (instantiate s1 (Free x), instantiate s2 t)
@@ -67,20 +70,30 @@ data Context = EmptyCtx
              | CaseCtx Context [(String, [String], Term)]
 
 -- place term in context
-
+place :: Term -> Context -> Term
 place t EmptyCtx = t
 place t (ApplyCtx k ts) = place (Apply t ts) k
 place t (CaseCtx k bs) = place (Case t bs) k
 
+match :: (Eq a1, Foldable t1, Foldable t2) 
+   => [(a1, t1 a2, c1)] -> [(a1, t2 a3, c2)] 
+   -> Bool
 match bs bs'
   = length bs == length bs' &&
       all (\ ((c, xs, t), (c', xs', t')) -> c == c' && length xs == length xs')
         (zip bs bs')
 
 -- checking for renaming
-
+renaming :: Term -> Term -> Maybe [(String, String)]
 renaming t u = renaming' [] [] t u []
 
+renaming'
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [(String, String)]
+   -> Maybe [(String, String)]
 renaming' s1 s2 (Free x) t r
   | x `elem` fst (unzip s1) =
     renaming' [] [] (instantiate s1 (Free x)) (instantiate s2 t) r
@@ -113,9 +126,16 @@ renaming' s1 s2 (Letrec f xs t u) (Letrec f' xs' t' u') r
 renaming' s1 s2 t t' r = Nothing
 
 -- checking for instance
-
+inst :: Term -> Term -> Maybe [(String, Term)]
 inst t u = inst' [] [] t u []
 
+inst'
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [(String, Term)]
+   -> Maybe [(String, Term)]
 inst' s1 s2 (Free x) t s
   | x `elem` fst (unzip s1) =
     inst' [] [] (instantiate s1 (Free x)) (instantiate s2 t) s
@@ -148,11 +168,25 @@ inst' s1 s2 (Letrec f xs t u) (Letrec f' xs' t' u') s
 inst' s1 s2 t t' s = Nothing
 
 -- checking for embedding for generalisation
-
+embed :: Term -> Term -> [[(String, String)]]
 embed t u = couple [] [] t u []
 
+embedding
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [(String, String)]
+   -> [[(String, String)]]
 embedding s1 s2 t u r = couple s1 s2 t u r ++ dive s1 s2 t u r
 
+couple
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [(String, String)]
+   -> [[(String, String)]]
 couple s1 s2 (Free x) (Free x') r
   | x `elem` fst (unzip s1) && x' `elem` fst (unzip s2) =
     embedding [] [] (instantiate s1 (Free x)) (instantiate s2 (Free x')) r
@@ -187,6 +221,13 @@ couple s1 s2 (Letrec f xs t u) (Letrec f' xs' t' u') r
       r
 couple s1 s2 t t' r = []
 
+dive
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [(String, String)]
+   -> [[(String, String)]]
 dive s1 s2 t (Lambda x t') r = embedding s1 s2 t (concrete x t') r
 dive s1 s2 t (Con c ts) r = concat [embedding s1 s2 t t' r | t' <- ts]
 dive s1 s2 t (Apply t' ts) r
@@ -201,9 +242,19 @@ dive s1 s2 t (Letrec f xs t' u) r
 dive s1 s2 t t' r = []
 
 -- most specific generalisation of terms
-
+generalise :: Term -> Term -> (Term, [(String, Term)], [(String, Term)])
 generalise t u = generalise' [] [] t u (free t ++ free u) [] [] []
 
+generalise'
+   :: [(String, Term)]
+   -> [(String, Term)]
+   -> Term
+   -> Term
+   -> [String]
+   -> [String]
+   -> [(String, Term)]
+   -> [(String, Term)]
+   -> (Term, [(String, Term)], [(String, Term)])
 generalise' s1 s2 (Free x) t fv bv g1 g2
   | x `elem` fst (unzip s1) =
     let (t', g1', g2')
@@ -315,11 +366,15 @@ generalise' s1 s2 t u fv bv g1 g2
                        (makeApplication (Free x) (map Free xs), (x, t') : g1,
                         (x, u') : g2)
 
+makeLet :: Foldable t => t (String, Term) -> Term -> Term
 makeLet s t = foldl (\ u (x, t) -> Let x t (abstract u x)) t s
 
+makeApplication :: Term -> [Term] -> Term
 makeApplication t [] = t
 makeApplication t ts = Apply t ts
 
+eval :: Num a => Term -> Context -> [(String, ([String], Term))] -> Int -> a
+   -> (Term, Int, a)
 eval t (ApplyCtx k []) d r a = eval t k d r a
 eval (Free x) k d r a = error ("Unbound identifier: " ++ x)
 eval (Lambda x t) EmptyCtx d r a = (Lambda x t, r, a)
@@ -361,9 +416,10 @@ eval (Letrec f xs t u) k d r a
       in eval u' k ((f', (xs, t')) : d) (r + 1) a
 
 -- free variables in a term
-
+free :: Term -> [String]
 free t = free' t []
 
+free' :: Term -> [String] -> [String]
 free' (Free x) xs = if x `elem` xs then xs else x : xs
 free' (Bound i) xs = xs
 free' (Lambda x t) xs = free' t xs
@@ -375,9 +431,10 @@ free' (Let x t u) xs = free' t (free' u xs)
 free' (Letrec f xs' t u) xs = free' t (free' u xs)
 
 -- functions in a program
-
+funs :: Term -> [String]
 funs = funs' []
 
+funs' :: [String] -> Term -> [String]
 funs' fs (Free x) = fs
 funs' fs (Bound i) = fs
 funs' fs (Lambda x t) = funs' fs t
@@ -389,9 +446,10 @@ funs' fs (Let x t u) = funs' (funs' fs t) u
 funs' fs (Letrec f xs t u) = funs' (funs' fs t) u
 
 -- shift global de Bruijn indices by i, where current depth is d
-
+shift ::Int -> Term -> Term
 shift = shift' 0
 
+shift' :: Int -> Int -> Term -> Term
 shift' d 0 u = u
 shift' d i (Free x) = Free x
 shift' d i (Bound i') = if i' >= d then Bound (i' + i) else Bound i'
@@ -407,9 +465,10 @@ shift' d i (Letrec f xs t u)
   = Letrec f xs (shift' (d + 1 + length xs) i t) (shift' (d + 1) i u)
 
 -- substitute term t for variable with de Bruijn index i
-
+subst :: Term -> Term -> Term
 subst = subst' 0
 
+subst' :: Int -> Term -> Term -> Term
 subst' i t (Free x) = Free x
 subst' i t (Bound i')
   | i' < i = Bound i'
@@ -427,9 +486,10 @@ subst' i t (Letrec f xs t' u)
   = Letrec f xs (subst' (i + 1 + length xs) t t') (subst' (i + 1) t u)
 
 -- instantiate a term t using substitution s
-
+instantiate :: [(String, Term)] -> Term -> Term
 instantiate = instantiate' 0
 
+instantiate' :: Int -> [(String, Term)] -> Term -> Term
 instantiate' d s (Free x)
   = case lookup x s of
         Just t -> shift d t
@@ -450,9 +510,10 @@ instantiate' d s (Letrec f xs t u)
       (instantiate' (d + 1) s u)
 
 -- replace variable x with de Bruijn index
-
+abstract :: Term -> String -> Term
 abstract = abstract' 0
 
+abstract' :: Int -> Term -> String -> Term
 abstract' i (Free x') x = if x == x' then Bound i else Free x'
 abstract' i (Bound i') x = if i' >= i then Bound (i' + 1) else Bound i'
 abstract' i (Lambda x' t) x = Lambda x' (abstract' (i + 1) t x)
@@ -468,9 +529,10 @@ abstract' i (Letrec f xs t u) x
   = Letrec f xs (abstract' (i + 1 + length xs) t x) (abstract' (i + 1) u x)
 
 -- replace de Bruijn index 0 with variable x
-
+concrete :: String -> Term -> Term
 concrete = concrete' 0
 
+concrete' :: Int -> String -> Term -> Term
 concrete' i x (Free x') = Free x'
 concrete' i x (Bound i')
   | i' < i = Bound i'
@@ -488,9 +550,10 @@ concrete' i x (Letrec f xs t u)
   = Letrec f xs (concrete' (i + 1 + length xs) x t) (concrete' (i + 1) x u)
 
 -- replace function f with de Bruijn index
-
+abstractFun :: Term -> String -> Term
 abstractFun = abstractFun' 0
 
+abstractFun' :: Int -> Term -> String -> Term
 abstractFun' i (Free x) f = Free x
 abstractFun' i (Bound i') f = if i' >= i then Bound (i' + 1) else Bound i'
 abstractFun' i (Lambda x t) f = Lambda x (abstractFun' (i + 1) t f)
@@ -508,9 +571,10 @@ abstractFun' i (Letrec f' xs t u) f
       (abstractFun' (i + 1) u f)
 
 -- replace de Bruijn index 0 with function f
-
+concreteFun :: String -> Term -> Term
 concreteFun = concreteFun' 0
 
+concreteFun' :: Int -> String -> Term -> Term
 concreteFun' i f (Free x) = Free x
 concreteFun' i f (Bound i')
   | i' < i = Bound i'
@@ -530,12 +594,14 @@ concreteFun' i f (Letrec f' xs t u)
   = Letrec f' xs (concreteFun' (i + 1 + length xs) f t)
       (concreteFun' (i + 1) f u)
 
+rename :: Foldable t => t [Char] -> [Char] -> [Char]
 rename fv x = if x `elem` fv then rename fv (x ++ "'") else x
 
 -- rename a term t using renaming r
-
+renameVar :: Eq a => [(a, a)] -> a -> a
 renameVar r x = fromMaybe x (lookup x r)
 
+renameTerm :: [(String, String)] -> Term -> Term
 renameTerm r (Free x) = Free (renameVar r x)
 renameTerm r (Bound i) = Bound i
 renameTerm r (Lambda x t) = Lambda x (renameTerm r t)
@@ -548,19 +614,24 @@ renameTerm r (Let x t u) = Let x (renameTerm r t) (renameTerm r u)
 renameTerm r (Letrec f xs t u) = Letrec f xs (renameTerm r t) (renameTerm r u)
 
 -- redex
-
+redex :: Term -> Term
 redex (Apply t u) = redex t
 redex (Case t bs) = redex t
 redex t = t
 
 -- function name and args
-
+fun :: Term -> Term
 fun (Apply t ts) = t
 
+args :: Term -> [Term]
 args (Apply t ts) = ts
 
 -- unfold function
-
+unfold
+   :: Term
+   -> [[Char]]
+   -> [(String, ([String], Term))]
+   -> (Term, [(String, ([String], Term))])
 unfold (Apply t ts) fs d = let (t', d') = unfold t fs d in (Apply t' ts, d')
 unfold (Case t bs) fs d = let (t', d') = unfold t fs d in (Case t' bs, d')
 unfold (Fun f) fs d
@@ -576,6 +647,7 @@ unfold t fs d = (t, d)
 
 -- pretty printing
 
+stripLambda :: Term -> ([[Char]], Term)
 stripLambda (Lambda x t)
   = let x' = rename (free t) x
         (xs, u) = stripLambda $ concrete x' t
@@ -584,6 +656,7 @@ stripLambda t = ([], t)
 
 blank = P.space
 
+prettyTerm :: Term -> P.Doc
 prettyTerm (Free x) = text x
 prettyTerm (Bound i) = text "#" <> int i
 prettyTerm t@(Lambda _ _)
@@ -628,6 +701,7 @@ prettyTerm (Letrec f xs t u)
          prettyTerm t')
         $$ (text "in" <+> prettyTerm u')
 
+prettyAtom :: Term -> P.Doc
 prettyAtom (Free x) = text x
 prettyAtom t@(Con c ts)
   | isNat t = int $ con2nat t
@@ -638,8 +712,10 @@ prettyAtom t@(Con c ts)
 prettyAtom (Fun f) = text f
 prettyAtom t = parens $ prettyTerm t
 
+prettyProg :: (Term, [([Char], ([String], Term))]) -> P.Doc
 prettyProg (t, d) = prettyProg' (("main", ([], t)) : d)
 
+prettyProg' :: [(String, ([String], Term))] -> P.Doc
 prettyProg' [] = empty
 prettyProg' [(f, (xs, t))]
   = text f <+> hsep (map text xs) <+> equals <+> prettyTerm t
@@ -647,28 +723,36 @@ prettyProg' ((f, (xs, t)) : fs)
   = text f <+> hsep (map text xs) <+> equals <+> prettyTerm t <> semi $$
       prettyProg' fs
 
+isList :: Term -> Bool
 isList (Con "Nil" []) = True
 isList (Con "Cons" [h, t]) = isList t
 isList _ = False
 
+list2con :: [Term] -> Term
 list2con [] = Con "Nil" []
 list2con (h : t) = Con "Cons" [h, list2con t]
 
+con2list :: Term -> [Term]
 con2list (Con "Nil" []) = []
 con2list (Con "Cons" [h, t]) = h : con2list t
 
+isNat :: Term -> Bool
 isNat (Con "Zero" []) = True
 isNat (Con "Succ" [n]) = isNat n
 isNat _ = False
 
+nat2con :: (Eq t, Num t) => t -> Term
 nat2con 0 = Con "Zero" []
 nat2con n = Con "Succ" [nat2con $ n - 1]
 
+con2nat :: Num p => Term -> p
 con2nat (Con "Zero" []) = 0
 con2nat (Con "Succ" [n]) = 1 + con2nat n
 
 -- lexing and parsing
 
+potDef :: T.GenLanguageDef
+   String u Data.Functor.Identity.Identity
 potDef
   = emptyDef{commentStart = "/*", commentEnd = "*/", commentLine = "--",
              nestedComments = True, identStart = lower,
@@ -690,10 +774,12 @@ reserved = T.reserved lexer
 reservedOp = T.reservedOp lexer
 natural = T.natural lexer
 
+makeFuns :: [(String, (a, Term))] -> [(String, (a, Term))]
 makeFuns ds
   = let fs = fst (unzip ds) in
       map (\ (f, (xs, t)) -> (f, (xs, makeFuns' fs t))) ds
 
+makeFuns' :: Foldable t => t String -> Term -> Term
 makeFuns' fs (Free x) = if x `elem` fs then Fun x else Free x
 makeFuns' fs (Bound i) = Bound i
 makeFuns' fs (Lambda x t) = Lambda x (makeFuns' fs t)
@@ -704,21 +790,30 @@ makeFuns' fs (Case t bs)
 makeFuns' fs (Let x t u) = Let x (makeFuns' fs t) (makeFuns' fs u)
 makeFuns' fs (Letrec f xs t u) = Letrec f xs (makeFuns' fs t) (makeFuns' fs u)
 
+con :: Text.Parsec.Prim.ParsecT
+   String u Data.Functor.Identity.Identity [Char]
 con
   = do c <- upper
        cs <- many letter
        spaces
        return (c : cs)
 
+modul :: Text.Parsec.Prim.ParsecT
+   String u Data.Functor.Identity.Identity
+   ([[Char]], [(String, ([String], Term))])
 modul
   = do fs <- many imp
        ds <- sepBy1 fundef semic
        return (fs, ds)
 
+imp :: Text.Parsec.Prim.ParsecT
+   String u Data.Functor.Identity.Identity [Char]
 imp
   = do reserved "import"
        con
 
+expr :: Text.Parsec.Prim.ParsecT
+   String u Data.Functor.Identity.Identity Term
 expr
   = do reserved "ALL"
        x <- identifier
@@ -747,6 +842,8 @@ expr
               [Apply (Free "construct") [Lambda x (abstract e x)]])
       <|> term
 
+fundef :: Text.Parsec.Prim.ParsecT
+      String u Data.Functor.Identity.Identity (String, ([String], Term))
 fundef
   = do f <- identifier
        xs <- many identifier
@@ -754,6 +851,8 @@ fundef
        e <- expr
        return (f, (xs, e))
 
+term :: Text.Parsec.Prim.ParsecT
+   String u Data.Functor.Identity.Identity Term
 term
   = do t <- atom
        ts <- many atom
@@ -788,6 +887,8 @@ term
          u <- term
          return (Letrec f xs (abstract (foldl abstract t xs) f) (abstract u f))
 
+atom :: Text.Parsec.Prim.ParsecT
+      String u Data.Functor.Identity.Identity Term
 atom
   = do x <- identifier
        return (Free x)
@@ -807,6 +908,8 @@ atom
          return (list2con ts)
       <|> bracks expr
 
+branch :: Text.Parsec.Prim.ParsecT
+      String u Data.Functor.Identity.Identity (String, [String], Term)
 branch
   = do c <- con
        xs <- bracks (sepBy1 identifier comm) <|>
@@ -816,6 +919,10 @@ branch
        t <- term
        return (c, xs, foldl abstract t xs)
 
+parseTerm :: String -> Either ParseError Term
 parseTerm = parse term "Parse error"
 
+parseModule
+  :: String
+     -> Either ParseError ([[Char]], [(String, ([String], Term))])
 parseModule = parse modul "Parse error"

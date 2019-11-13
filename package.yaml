@@ -20,6 +20,7 @@ dependencies:
 - pretty
 - parsec
 - directory
+- transformers
 
 library:
   source-dirs: src

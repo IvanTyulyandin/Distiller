@@ -6,6 +6,13 @@ import Debug.Trace
 import Exception
 import Term
 
+super
+   :: Term
+   -> Context
+   -> [[Char]]
+   -> [(String, ([String], Term))]
+   -> [(String, ([String], Term))]
+   -> Exception (String, Term) Term
 super t (ApplyCtx k []) fv m d = super t k fv m d
 super (Free x) (CaseCtx k bs) fv m d
   = do bs' <- mapM
@@ -85,7 +92,6 @@ super (Fun f) k fv m d
                                                    xs)
                                                 (Apply (Bound 0) (map Free xs))
                                               else t'')
-
 super (Apply t ts) k fv m d = super t (ApplyCtx k ts) fv m d
 super (Case t bs) k fv m d = super t (CaseCtx k bs) fv m d
 super (Let x t u) k fv m d
@@ -99,6 +105,13 @@ super (Letrec f xs t u) k fv m d
         u' = concreteFun f' u
       in super u' k fv m ((f', (xs, t')) : d)
 
+superCtx
+   :: Term
+   -> Context
+   -> [[Char]]
+   -> [(String, ([String], Term))]
+   -> [(String, ([String], Term))]
+   -> Exception (String, Term) Term
 superCtx t EmptyCtx fv m d = return t
 superCtx t (ApplyCtx k ts) fv m d
   = do ts' <- mapM (\ t -> super t EmptyCtx fv m d) ts
@@ -116,9 +129,25 @@ superCtx t (CaseCtx k bs) fv m d
                 bs
        return (Case t bs')
 
+dist :: (Term, [(String, ([String], Term))]) -> Term
 dist (t, d) = returnval (distill t EmptyCtx (free t) [] d)
 
+distill
+   :: Term
+   -> Context
+   -> [[Char]]
+   -> [(String, ([String], Term))]
+   -> [(String, ([String], Term))]
+   -> Exception (String, Term) Term
 distill t k fv = trace (show fv ++ show (place t k)) distill' t k fv
+
+distill'
+  :: Term
+     -> Context
+     -> [[Char]]
+     -> [(String, ([String], Term))]
+     -> [(String, ([String], Term))]
+     -> Exception (String, Term) Term
 distill' t (ApplyCtx k []) fv m d = distill t k fv m d
 distill' (Free x) (CaseCtx k bs) fv m d
   = do bs' <- mapM
@@ -209,6 +238,14 @@ distill' (Letrec f xs t u) k fv m d
         t' = concreteFun f' (foldr concrete t xs)
         u' = concreteFun f' u
       in distill u' k fv m ((f', (xs, t')) : d)
+
+distillCtx
+    :: Term
+    -> Context
+    -> [[Char]]
+    -> [(String, ([String], Term))]
+    -> [(String, ([String], Term))]
+    -> Exception (String, Term) Term
 distillCtx t EmptyCtx fv m d = return t
 distillCtx t (ApplyCtx k ts) fv m d
   = do ts' <- mapM (\ t -> distill t EmptyCtx fv m d) ts
@@ -225,4 +262,3 @@ distillCtx t (CaseCtx k bs) fv m d
                         return (c, xs, foldl abstract t' xs'))
                 bs
        return (Case t bs')
-

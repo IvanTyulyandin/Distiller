@@ -14,7 +14,7 @@ instance Applicative (Exception a) where
         (<*>) = ap
 
 instance Monad (Exception a) where
-        (>>=) (Exn d) f = (Exn d)
+        (>>=) (Exn d) _ = (Exn d)
         (>>=) (NoExn a) f = f a
 
 handle :: Exception a b -> (a -> Exception a b) -> Exception a b
@@ -26,4 +26,6 @@ handle x f
 throw :: a -> Exception a b
 throw x = Exn x
 
+returnval :: Exception a b -> b
 returnval (NoExn a) = a
+returnval (Exn _) = error "unexpected call: returnval (Exn _)"

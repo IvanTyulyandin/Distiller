@@ -20,7 +20,9 @@ dependencies:
 - pretty
 - parsec
 - directory
-- transformers
+
+ghc-options:
+  - -Wall
 
 library:
   source-dirs: src

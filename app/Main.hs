@@ -1,13 +1,8 @@
 module Main (main) where
 
-import Control.Monad
-import Data.List
-import Debug.Trace
 import System.Directory
-import System.Exit
 import System.IO
 import Term
-import Text.ParserCombinators.Parsec
 import Trans
 
 data Command = Load String
@@ -53,18 +48,18 @@ toplevel p
        case command x of
            Load f -> g [f] [] []
 
-             where g [] ys ds
+             where g [] _ ds
                      = let ds' = makeFuns ds in
                          case lookup "main" ds' of
                              Nothing -> do putStrLn "No main function"
                                            toplevel Nothing
-                             Just (xs, t) -> toplevel (Just (t, ds'))
-                   g (x : xs) ys ds
-                     = if x `elem` ys then g xs ys ds else
-                         do r <- loadFile x
+                             Just (_, t) -> toplevel (Just (t, ds'))
+                   g (y : ys) zs ds
+                     = if y `elem` zs then g ys zs ds else
+                         do r <- loadFile y
                             case r of
                                 Nothing -> toplevel Nothing
-                                Just (fs, ds2) -> g (xs ++ fs) (x : ys)
+                                Just (fs, ds2) -> g (ys ++ fs) (y : zs)
                                                     (ds ++ ds2)
            Prog -> case p of
                        Nothing -> do putStrLn "No program loaded"
@@ -74,30 +69,30 @@ toplevel p
            Term -> case p of
                        Nothing -> do putStrLn "No program loaded"
                                      toplevel p
-                       Just (t, ds) -> do print t
-                                          toplevel p
+                       Just (t, _) -> do print t
+                                         toplevel p
            Eval -> case p of
                        Nothing -> do putStrLn "No program loaded"
                                      toplevel p
                        Just (t, ds) -> f (free t) t
 
-                         where f [] t
-                                 = do let (v, r, a) = eval t EmptyCtx ds 0 0
+                         where f [] trm
+                                 = do let (v, r, a) = eval trm EmptyCtx ds 0 0
                                       print v
                                       putStrLn ("Reductions: " ++ show r)
-                                      putStrLn ("Allocations: " ++ show a)
+                                      putStrLn ("Allocations: " ++ show (a :: Int))
                                       toplevel p
-                               f (x : xs) t
-                                 = do putStr (x ++ " = ")
+                               f (y : ys) trm
+                                 = do putStr (y ++ " = ")
                                       hFlush stdout
                                       l <- getLine
                                       case parseTerm l of
                                           Left s -> do putStrLn
                                                          ("Could not parse term: "
                                                             ++ show s)
-                                                       f (x : xs) t
-                                          Right u -> f xs
-                                                       (subst u (abstract t x))
+                                                       f (y : ys) trm
+                                          Right u -> f ys
+                                                       (subst u (abstract trm y))
            Distill -> case p of
                           Nothing -> do putStrLn "No program loaded"
                                         toplevel p

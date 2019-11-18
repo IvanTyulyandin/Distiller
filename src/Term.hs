@@ -26,8 +26,7 @@ data Term = Free VarName                           -- free variable
           | Apply Term [Term]                      -- application
           | Case Term [(ConName, [VarName], Term)] -- case expression
           | Let VarName Term Term                  -- temporary let expression
-          | Letrec FuncName [String] Term Term     -- local function
-          -- Q: what is [String] stands for?
+          | Letrec FuncName [VarName] Term Term    -- local function
 
 instance Show Term where
         show t = render $ prettyTerm t
@@ -51,7 +50,7 @@ eqTerm _ _ (Bound i, Bound i') = i == i'
 eqTerm s1 s2 (Lambda _ t, Lambda _ t') = eqTerm s1 s2 (t, t')
 eqTerm s1 s2 (Con c ts, Con c' ts') | c == c' = all (eqTerm s1 s2) (zip ts ts')
 eqTerm _ _ (Fun f, Fun f') = f == f'
--- Q: is there no need to check second arg of Apply (Bound _)?
+-- Q: Does one need to check second arg of Apply (Bound _)?
 eqTerm _ _ (Apply (Bound i) _, Apply (Bound i') _) = i == i'
 eqTerm s1 s2 (Apply t ts, Apply t' ts')
   = eqTerm s1 s2 (t, t') && all (eqTerm s1 s2) (zip ts ts')
@@ -465,11 +464,10 @@ shift' d i (Letrec f xs t u)
   = Letrec f xs (shift' (d + 1 + length xs) i t) (shift' (d + 1) i u)
 
 -- substitute term t for variable with de Bruijn index i
--- Q: cannot understand what is going on here
 subst :: Term -> Term -> Term
 subst = subst' 0
 
-subst' :: Int -> Term -> Term -> Term
+subst' :: DeBruijnIndex -> Term -> Term -> Term
 subst' _ _ (Free x) = Free x
 subst' i t (Bound i')
   | i' < i = Bound i'
@@ -518,7 +516,6 @@ abstract = abstract' 0
 abstract' :: DeBruijnIndex -> Term -> VarName -> Term
 abstract' i (Free x') x = if x == x' then Bound i else Free x'
 abstract' i (Bound i') _ = if i' >= i then Bound (i' + 1) else Bound i'
--- Q: Is there mix of de Bruijn notation and LC?
 abstract' i (Lambda x' t) x = Lambda x' (abstract' (i + 1) t x)
 abstract' i (Con c ts) x = Con c (map (\ t -> abstract' i t x) ts)
 abstract' _ (Fun f) _ = Fun f

@@ -13,22 +13,28 @@ import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as T
 import Text.PrettyPrint.HughesPJ as P
 
-data Term = Free String                            -- free variable
-          | Bound Int                              -- bound variable with de Bruijn index
-          | Lambda String Term                     -- lambda abstraction
-          | Con String [Term]                      -- constructor application
-          | Fun String                             -- function call
+type VarName = String
+type ConName = String
+type FuncName = String
+type DeBruijnIndex = Int
+
+data Term = Free VarName                           -- free variable
+          | Bound DeBruijnIndex                    -- bound variable with de Bruijn index
+          | Lambda VarName Term                    -- lambda abstraction
+          | Con ConName [Term]                     -- constructor application
+          | Fun FuncName                           -- function call
           | Apply Term [Term]                      -- application
-          | Case Term [(String, [String], Term)]   -- case expression
-          | Let String Term Term                   -- temporary let expression
-          | Letrec String [String] Term Term       -- local function
+          | Case Term [(ConName, [VarName], Term)] -- case expression
+          | Let VarName Term Term                  -- temporary let expression
+          | Letrec FuncName [String] Term Term     -- local function
+          -- Q: what is [String] stands for?
 
 instance Show Term where
         show t = render $ prettyTerm t
 
 type Prog = (Term, [(String, ([String], Term))])
 
-showProg :: (Term, [([Char], ([String], Term))]) -> String
+showProg :: (Term, [(String, ([String], Term))]) -> String
 showProg p = render $ prettyProg p
 
 -- equality of terms
@@ -45,19 +51,21 @@ eqTerm _ _ (Bound i, Bound i') = i == i'
 eqTerm s1 s2 (Lambda _ t, Lambda _ t') = eqTerm s1 s2 (t, t')
 eqTerm s1 s2 (Con c ts, Con c' ts') | c == c' = all (eqTerm s1 s2) (zip ts ts')
 eqTerm _ _ (Fun f, Fun f') = f == f'
+-- Q: is there no need to check second arg of Apply (Bound _)?
 eqTerm _ _ (Apply (Bound i) _, Apply (Bound i') _) = i == i'
 eqTerm s1 s2 (Apply t ts, Apply t' ts')
   = eqTerm s1 s2 (t, t') && all (eqTerm s1 s2) (zip ts ts')
 eqTerm s1 s2 (Case t bs, Case t' bs')
   | match bs bs' =
     eqTerm s1 s2 (t, t') &&
+    -- Q: should ConNames be compared in Case?
       all (\ ((_, _, t1), (_, _, t2)) -> eqTerm s1 s2 (t1, t2)) (zip bs bs')
 eqTerm s1 s2 (Let _ t u, Let _ t' u')
   = eqTerm s1 s2 (t, t') && eqTerm s1 s2 (u, u')
 eqTerm s1 s2 (Letrec _ xs t u, Letrec _ xs' t' u')
   = eqTerm (zip xs (args (instantiate s1 u)))
-      (zip xs' (args (instantiate s2 u')))
-      (foldr concrete t xs, foldr concrete t' xs')
+           (zip xs' (args (instantiate s2 u')))
+           (foldr concrete t xs, foldr concrete t' xs')
 eqTerm _ _ (_, _) = False
 
 -- context surrounding redex
@@ -410,7 +418,8 @@ eval (Bound _) (CaseCtx _ _) _ _ _ =
 free :: Term -> [String]
 free t = free' t []
 
-free' :: Term -> [String] -> [String]
+-- Note: Free may be inserted with function abstract
+free' :: Term -> [VarName] -> [VarName]
 free' (Free x) xs = if x `elem` xs then xs else x : xs
 free' (Bound _) xs = xs
 free' (Lambda _ t) xs = free' t xs
@@ -422,10 +431,10 @@ free' (Let _ t u) xs = free' t (free' u xs)
 free' (Letrec _ _ t u) xs = free' t (free' u xs)
 
 -- functions in a program
-funs :: Term -> [String]
+funs :: Term -> [FuncName]
 funs = funs' []
 
-funs' :: [String] -> Term -> [String]
+funs' :: [FuncName] -> Term -> [FuncName]
 funs' fs (Free _) = fs
 funs' fs (Bound _) = fs
 funs' fs (Lambda _ t) = funs' fs t
@@ -456,6 +465,7 @@ shift' d i (Letrec f xs t u)
   = Letrec f xs (shift' (d + 1 + length xs) i t) (shift' (d + 1) i u)
 
 -- substitute term t for variable with de Bruijn index i
+-- Q: cannot understand what is going on here
 subst :: Term -> Term -> Term
 subst = subst' 0
 
@@ -501,12 +511,14 @@ instantiate' d s (Letrec f xs t u)
       (instantiate' (d + 1) s u)
 
 -- replace variable x with de Bruijn index
-abstract :: Term -> String -> Term
+-- Note: making lambda abstraction
+abstract :: Term -> VarName -> Term
 abstract = abstract' 0
 
-abstract' :: Int -> Term -> String -> Term
+abstract' :: DeBruijnIndex -> Term -> VarName -> Term
 abstract' i (Free x') x = if x == x' then Bound i else Free x'
 abstract' i (Bound i') _ = if i' >= i then Bound (i' + 1) else Bound i'
+-- Q: Is there mix of de Bruijn notation and LC?
 abstract' i (Lambda x' t) x = Lambda x' (abstract' (i + 1) t x)
 abstract' i (Con c ts) x = Con c (map (\ t -> abstract' i t x) ts)
 abstract' _ (Fun f) _ = Fun f
@@ -765,6 +777,7 @@ list2con (h : t) = Con "Cons" [h, list2con t]
 con2list :: Term -> [Term]
 con2list (Con "Nil" []) = []
 con2list (Con "Cons" [h, t]) = h : con2list t
+--to remove incomplete patterns warning
 con2list (Free _) =
   error "unexpected call: con2list (Free _)"
 con2list (Bound _) =

@@ -9,24 +9,24 @@ import Term
 super
    :: Term
    -> Context
-   -> [[Char]]
+   -> [String]
    -> [(String, ([String], Term))]
    -> [(String, ([String], Term))]
    -> Exception (String, Term) Term
 super t (ApplyCtx k []) fv m d = super t k fv m d
 super (Free x) (CaseCtx k bs) fv m d
   = do bs' <- mapM
-                (\ (c, xs, t) ->
+                (\ (conName, conVars, t) ->
                    let t' = place t k
                        fv'
                          = foldr (\ x' fvs -> let x'' = rename fvs x' in x'' : fvs) fv
-                             xs
-                       xs' = take (length xs) fv'
-                       u = subst (Con c (map Free xs'))
-                             (abstract (foldr concrete t' xs') x)
+                           conVars
+                       vars' = take (length conVars) fv'
+                       u = subst (Con conName (map Free vars'))
+                             (abstract (foldr concrete t' vars') x)
                      in
                      do u' <- super u EmptyCtx fv' m d
-                        return (c, xs, foldl abstract u' xs'))
+                        return (conName, conVars, foldl abstract u' vars'))
                 bs
        return (Case (Free x) bs')
 super (Free x) k fv m d = superCtx (Free x) k fv m d
@@ -86,17 +86,13 @@ super (Letrec f xs t u) k fv m d
       in super u' k fv m ((f', (xs, t')) : d)
 
 -- to remove incomplete patterns warnings
-super (Bound _) EmptyCtx _ _ _ = 
-  error "unexpected call: (Bound _) EmptyCtx _ _ _"
-super (Bound _) (ApplyCtx _ (_:_)) _ _ _ =
-  error "unexpected call: (Bound _) (ApplyCtx _ (_:_)) _ _ _"
-super (Bound _) (CaseCtx _ _) _ _ _ =
-  error "unexpected call: (Bound _) (CaseCtx _ _) _ _ _"
+super (Bound _) _ _ _ _ =
+  error "unexpected call: (Bound _) _ _ _ _"
 
 superCtx
    :: Term
    -> Context
-   -> [[Char]]
+   -> [String]
    -> [(String, ([String], Term))]
    -> [(String, ([String], Term))]
    -> Exception (String, Term) Term
@@ -123,7 +119,7 @@ dist (t, d) = returnval (distill t EmptyCtx (free t) [] d)
 distill
    :: Term
    -> Context
-   -> [[Char]]
+   -> [String]
    -> [(String, ([String], Term))]
    -> [(String, ([String], Term))]
    -> Exception (String, Term) Term
@@ -132,7 +128,7 @@ distill t k fv = trace (show fv ++ show (place t k)) distill' t k fv
 distill'
   :: Term
      -> Context
-     -> [[Char]]
+     -> [String]
      -> [(String, ([String], Term))]
      -> [(String, ([String], Term))]
      -> Exception (String, Term) Term
@@ -211,17 +207,13 @@ distill' (Letrec f xs t u) k fv m d
         u' = concreteFun f' u
       in distill u' k fv m ((f', (xs, t')) : d)
 -- to remove incomplete patterns warning
-distill' (Bound _) EmptyCtx _ _ _ = 
-  error "unexpected call: distill' (Bound _) EmptyCtx"
-distill' (Bound _) (ApplyCtx _ (_:_)) _ _ _ = 
-  error "unexpected call: distill' (Bound _) (ApplyCtx _ (_:_)) _ _ _"
-distill' (Bound _) (CaseCtx _ _) _ _ _ = 
-  error "unexpected call: distill' (Bound _) (CaseCtx _ _) _ _ _"
+distill' (Bound _) _ _ _ _ =
+  error "unexpected call: distill' (Bound _) _ _ _ _"
 
 distillCtx
     :: Term
     -> Context
-    -> [[Char]]
+    -> [String]
     -> [(String, ([String], Term))]
     -> [(String, ([String], Term))]
     -> Exception (String, Term) Term

@@ -406,12 +406,8 @@ eval (Letrec f xs t u) k d r a
         u' = concreteFun f' u
       in eval u' k ((f', (xs, t')) : d) (r + 1) a
 -- to remove incomplete patterns warning
-eval (Bound _) EmptyCtx _ _ _ = 
-  error "unexpected call: eval (Bound _) EmptyCtx _ _ _"
-eval (Bound _) (ApplyCtx _ (_:_)) _ _ _ = 
-  error "unexpected call: eval (Bound _) (ApplyCtx _ (_:_)) _ _ _"
-eval (Bound _) (CaseCtx _ _) _ _ _ = 
-  error "unexpected call: eval (Bound _) (CaseCtx _ _) _ _ _"
+eval (Bound _) _ _ _ _ =
+  error "unexpected call: eval (Bound _) _ _ _ _"
 
 -- free variables in a term
 free :: Term -> [String]
@@ -509,7 +505,7 @@ instantiate' d s (Letrec f xs t u)
       (instantiate' (d + 1) s u)
 
 -- replace variable x with de Bruijn index
--- Note: making lambda abstraction
+-- Note: implicitly making lambda abstraction
 abstract :: Term -> VarName -> Term
 abstract = abstract' 0
 
@@ -529,10 +525,11 @@ abstract' i (Letrec f xs t u) x
   = Letrec f xs (abstract' (i + 1 + length xs) t x) (abstract' (i + 1) u x)
 
 -- replace de Bruijn index 0 with variable x
+-- Note: implicitly removing top-level lambda abstraction
 concrete :: String -> Term -> Term
 concrete = concrete' 0
 
-concrete' :: Int -> String -> Term -> Term
+concrete' :: DeBruijnIndex -> String -> Term -> Term
 concrete' _ _ (Free x') = Free x'
 concrete' i x (Bound i')
   | i' < i = Bound i'
@@ -594,7 +591,7 @@ concreteFun' i f (Letrec f' xs t u)
   = Letrec f' xs (concreteFun' (i + 1 + length xs) f t)
       (concreteFun' (i + 1) f u)
 
-rename :: Foldable t => t [Char] -> [Char] -> [Char]
+rename :: Foldable t => t String -> String -> String
 rename fv x = if x `elem` fv then rename fv (x ++ "'") else x
 
 -- rename a term t using renaming r
@@ -623,47 +620,19 @@ redex t = t
 fun :: Term -> Term
 fun (Apply t _) = t
 -- to remove incomplete patterns warning
-fun (Free _) =
-  error "unexpected call: fun (Free _)"
-fun (Bound _) =
-  error "unexpected call: fun (Bound _)"
-fun (Lambda _ _) =
-  error "unexpected call: fun (Lambda _ _)"
-fun (Con _ _) =
-  error "unexpected call: fun (Con _ _)"
-fun (Fun _) =
-  error "unexpected call: fun (Fun _)"
-fun (Case _ _) =
-  error "unexpected call: fun (Case _ _)"
-fun (Let _ _ _) =
-  error "unexpected call: fun (Let _ _ _)"
-fun (Letrec _ _ _ _) =
-  error "unexpected call: fun (Letrec _ _ _ _)"
+fun _ =
+  error "unexpected call: fun _"
 
 args :: Term -> [Term]
 args (Apply _ ts) = ts
 --to remove incomplete patterns warning
-args (Free _) =
-  error "unexpected call: args (Free _)"
-args (Bound _) =
-  error "unexpected call: args (Bound _)"
-args (Lambda _ _) =
-  error "unexpected call: args (Lambda _ _)"
-args (Con _ _) =
-  error "unexpected call: args (Con _ _)"
-args (Fun _) =
-  error "unexpected call: args (Fun _)"
-args (Case _ _) =
-  error "unexpected call: args (Case _ _)"
-args (Let _ _ _) =
-  error "unexpected call: args (Let _ _ _)"
-args (Letrec _ _ _ _) =
-  error "unexpected call: args (Letrec _ _ _ _)"
+args _ =
+  error "unexpected call: args _"
 
 -- unfold function
 unfold
    :: Term
-   -> [[Char]]
+   -> [String]
    -> [(String, ([String], Term))]
    -> (Term, [(String, ([String], Term))])
 unfold (Apply t ts) fs d = let (t', d') = unfold t fs d in (Apply t' ts, d')
@@ -682,7 +651,7 @@ unfold t _ d = (t, d)
 
 -- pretty printing
 
-stripLambda :: Term -> ([[Char]], Term)
+stripLambda :: Term -> ([String], Term)
 stripLambda (Lambda x t)
   = let x' = rename (free t) x
         (xs, u) = stripLambda $ concrete x' t
@@ -751,7 +720,7 @@ prettyAtom t@(Con c ts)
 prettyAtom (Fun f) = text f
 prettyAtom t = parens $ prettyTerm t
 
-prettyProg :: (Term, [([Char], ([String], Term))]) -> P.Doc
+prettyProg :: (Term, [(String, ([String], Term))]) -> P.Doc
 prettyProg (t, d) = prettyProg' (("main", ([], t)) : d)
 
 prettyProg' :: [(String, ([String], Term))] -> P.Doc
@@ -775,32 +744,8 @@ con2list :: Term -> [Term]
 con2list (Con "Nil" []) = []
 con2list (Con "Cons" [h, t]) = h : con2list t
 --to remove incomplete patterns warning
-con2list (Free _) =
-  error "unexpected call: con2list (Free _)"
-con2list (Bound _) =
-  error "unexpected call: con2list (Bound _)"
-con2list (Lambda _ _) =
-  error "unexpected call: con2list (Lambda _ _)"
-con2list (Con [] _) =
-  error "unexpected call: con2list (Con [] _)"
-con2list (Con ['C', 'o'] _) =
-  error "unexpected call: con2list (Con ['C', 'o'] _)"
-con2list (Con ('C':_:_) _) =
-  error "unexpected call: con2list (Con ('C':_:_) _)"
-con2list (Con ['C'] _) =
-  error "unexpected call: con2list (Con ['C'] _)"
-con2list (Con (_:_) _) =
-  error "unexpected call: con2list (Con (_:_) _)"
-con2list (Fun _) =
-  error "unexpected call: con2list (Fun _)"
-con2list (Apply _ _) =
-  error "unexpected call: con2list (Apply _ _)"
-con2list (Case _ _) =
-  error "unexpected call: con2list (Case _ _)"
-con2list (Let _ _ _) =
-  error "unexpected call: con2list (Let _ _ _)"
-con2list (Letrec _ _ _ _) =
-  error "unexpected call: con2list (Letrec _ _ _ _)"
+con2list _ =
+  error "unexpected call: con2list _"
 
 isNat :: Term -> Bool
 isNat (Con "Zero" []) = True
@@ -815,32 +760,8 @@ con2nat :: Num p => Term -> p
 con2nat (Con "Zero" []) = 0
 con2nat (Con "Succ" [n]) = 1 + con2nat n
 --to remove incomplete patterns warning
-con2nat (Free _) =
-  error "unexpected call: con2nat (Free _)"
-con2nat (Bound _) =
-  error "unexpected call: con2nat (Bound _)"
-con2nat (Lambda _ _) =
-  error "unexpected call: con2nat (Lambda _ _)"
-con2nat (Con [] _) =
-  error "unexpected call: con2nat (Con [] _)"
-con2nat (Con ['S', 'u'] _) =
-  error "unexpected call: con2nat (Con ['S', 'u'] _)"
-con2nat (Con ('S':_:_) _) =
-  error "unexpected call: con2nat (Con ('S':_:_) _)"
-con2nat (Con ['S'] _) =
-  error "unexpected call: con2nat (Con ['S'] _)"
-con2nat (Con (_:_) _) =
-  error "unexpected call: con2nat (Con (_:_) _)"
-con2nat (Fun _) = 
-  error "unexpected call: con2nat (Fun _)"
-con2nat (Apply _ _) =
-  error "unexpected call: con2nat (Apply _ _)"
-con2nat (Case _ _) =
-  error "unexpected call: con2nat (Case _ _))"
-con2nat (Let _ _ _) =
-  error "unexpected call: con2nat (Let _ _ _)"
-con2nat (Letrec _ _ _ _) =
-  error "unexpected call: con2nat (Letrec _ _ _ _)"
+con2nat _ =
+  error "unexpected call: con2nat _"
 
 -- lexing and parsing
 
@@ -902,7 +823,7 @@ makeFuns' fs (Letrec f xs t u) = Letrec f xs (makeFuns' fs t) (makeFuns' fs u)
 makeFuns' _ (Fun _) = error "unexpected call: _ (Fun _)"
 
 con :: Text.Parsec.Prim.ParsecT
-   String u Data.Functor.Identity.Identity [Char]
+   String u Data.Functor.Identity.Identity String
 con
   = do c <- upper
        cs <- many letter
@@ -911,14 +832,14 @@ con
 
 modul :: Text.Parsec.Prim.ParsecT
    String u Data.Functor.Identity.Identity
-   ([[Char]], [(String, ([String], Term))])
+   ([String], [(String, ([String], Term))])
 modul
   = do fs <- many imp
        ds <- sepBy1 fundef semic
        return (fs, ds)
 
 imp :: Text.Parsec.Prim.ParsecT
-   String u Data.Functor.Identity.Identity [Char]
+   String u Data.Functor.Identity.Identity String
 imp
   = do reserved "import"
        con
@@ -1035,5 +956,5 @@ parseTerm = parse term "Parse error"
 
 parseModule
   :: String
-     -> Either ParseError ([[Char]], [(String, ([String], Term))])
+     -> Either ParseError ([String], [(String, ([String], Term))])
 parseModule = parse modul "Parse error"

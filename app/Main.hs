@@ -14,7 +14,7 @@ data Command = Load String
              | Help
              | Unknown
 
-command :: [Char] -> Command
+command :: String -> Command
 command str
   = let res = words str in
       case res of
@@ -27,7 +27,7 @@ command str
           [":help"] -> Help
           _ -> Unknown
 
-helpMessage :: [Char]
+helpMessage :: String
 helpMessage
   = "\n:load filename\t\tTo load the given filename\n" ++
       ":prog\t\t\tTo print the current program\n" ++

@@ -6,6 +6,8 @@ import Debug.Trace
 import Exception
 import Term
 
+-- Note: cases of this function are annotated with input -> result.
+--       Using syntax from article. N == this function
 super
    :: Term
    -> Context
@@ -13,6 +15,8 @@ super
    -> [(String, ([String], Term))]
    -> [(String, ([String], Term))]
    -> Exception (String, Term) Term
+-- Note: seems like optimisation, but not sure
+--       if this situation should be possible
 super t (ApplyCtx k []) fv m d = super t k fv m d
 super (Free x) (CaseCtx k bs) fv m d
   = do bs' <- mapM
@@ -34,22 +38,31 @@ super (Lambda x t) EmptyCtx fv m d
   = let x' = rename fv x in
       do t' <- super (concrete x' t) EmptyCtx (x' : fv) m d
          return (Lambda x (abstract t' x'))
+-- N (con< (λv.e) e1..en >) = N (con< e{v := e1} e2..en >)
 super (Lambda _ t) (ApplyCtx k (t' : ts)) fv m d
   = super (subst t' t) (ApplyCtx k ts) fv m d
+-- N (con< case (λv.e) b1..bn >) = error
 super (Lambda _ _) (CaseCtx _ _) _ _ _
   = error "Unapplied function in case selector"
+-- N (con< (c t1..tn) >) = c (N t1, .., N tn)
 super (Con c ts) EmptyCtx fv m d
   = do ts' <- mapM (\ t -> super t EmptyCtx fv m d) ts
        return (Con c ts')
+-- N (con< (c t1..tn) e1..en >) = error
 super (Con c ts) (ApplyCtx k ts') _ _ _
   = error
       ("Constructor application is not saturated: " ++
          show (place (Con c ts) (ApplyCtx k ts')))
+-- N (con< case (c t1..tn) b1..bn >) = N (e{v1 := t1, .., vn := tn})
+-- where bi == (c v1..vn) -> e
+  -- Note: unfold case with known constructor c to expr e in branch bi
+  --       with substitution t1..tn instead of x1..xn in e
 super (Con c ts) (CaseCtx k bs) fv m d
   = case find (\ (c', xs, _) -> c == c' && length xs == length ts) bs of
         Nothing -> error
                      ("No matching pattern in case for term:\n\n" ++
                         show (Case (Con c ts) bs))
+        -- Q: is k equal to EmptyCtx?
         Just (_, _, t) -> super (foldr subst t ts) k fv m d
 super (Fun f) k fv m d | f `notElem` fst (unzip d) = superCtx (Fun f) k fv m d
 super (Fun f) k fv m d
@@ -70,9 +83,13 @@ super (Fun f) k fv m d
                                            else throw (f', t1)
                       in do t'' <- handle (super t' EmptyCtx fv ((renf,(xs,t)):m) d') handler
                             return (if renf `elem` funs t'' 
-                                    then Letrec renf xs (foldl abstract (abstractFun t'' renf) xs) (Apply (Bound 0) (map Free xs)) 
+                                    then Letrec renf xs
+                                          (foldl abstract (abstractFun t'' renf) xs)
+                                          (Apply (Bound 0) (map Free xs))
                                     else t'')
+-- Q: is this correct transformation?
 super (Apply t ts) k fv m d = super t (ApplyCtx k ts) fv m d
+-- Q: is this correct transformation?
 super (Case t bs) k fv m d = super t (CaseCtx k bs) fv m d
 super (Let x t u) k fv m d
   = let x' = rename fv x in
@@ -192,7 +209,9 @@ distill' (Fun f) k fv m d
                              else throw (f',t1)
                         in do t'' <- handle (distill t' EmptyCtx fv ((renf,(xs,t)):m) d') handler
                               return (if renf `elem` funs t'' 
-                                      then Letrec renf xs (foldl abstract (abstractFun t'' renf) xs) (Apply (Bound 0) (map Free xs))
+                                      then Letrec renf xs
+                                            (foldl abstract (abstractFun t'' renf) xs)
+                                            (Apply (Bound 0) (map Free xs))
                                       else t'')
 distill' (Apply t ts) k fv m d = distill t (ApplyCtx k ts) fv m d
 distill' (Case t bs) k fv m d = distill t (CaseCtx k bs) fv m d

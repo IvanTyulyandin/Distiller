@@ -9,6 +9,7 @@ data Command = Load String
              | Prog
              | Term
              | Eval
+             | SuperCompile
              | Distill
              | Quit
              | Help
@@ -22,6 +23,7 @@ command str
           [":prog"] -> Prog
           [":term"] -> Term
           [":eval"] -> Eval
+          [":sc"] -> SuperCompile
           [":distill"] -> Distill
           [":quit"] -> Quit
           [":help"] -> Help
@@ -33,8 +35,9 @@ helpMessage
       ":prog\t\t\tTo print the current program\n" ++
         ":term\t\t\tTo print the current term\n" ++
           ":eval\t\t\tTo evaluate the current term\n" ++
-            ":distill\t\t\tTo distill the current program\n" ++
-              ":quit\t\t\tTo quit\n" ++ ":help\t\t\tTo print this message\n"
+            ":sc\t\t\tTo supercompile the current term\n" ++
+              ":distill\t\t\tTo distill the current program\n" ++
+                ":quit\t\t\tTo quit\n" ++ ":help\t\t\tTo print this message\n"
 
 -- Entry point for main program
 main :: IO ()
@@ -93,6 +96,13 @@ toplevel p
                                                        f (y : ys) trm
                                           Right u -> f ys
                                                        (subst u (abstract trm y))
+           SuperCompile -> 
+              case p of
+                Nothing -> do putStrLn "No program loaded"
+                              toplevel p
+                Just t -> do let u = runSC t
+                             print u
+                             toplevel (Just (u, []))
            Distill -> case p of
                           Nothing -> do putStrLn "No program loaded"
                                         toplevel p

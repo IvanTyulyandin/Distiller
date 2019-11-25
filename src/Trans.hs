@@ -151,6 +151,9 @@ superCtx t (CaseCtx k bs) fv m d
                 bs
        return (Case t bs')
 
+runSC :: (Term, [(String, ([String], Term))]) -> Term
+runSC (t, d) = returnval (super t EmptyCtx (free t) [] d)
+
 dist :: (Term, [(String, ([String], Term))]) -> Term
 dist (t, d) = returnval (distill t EmptyCtx (free t) [] d)
 

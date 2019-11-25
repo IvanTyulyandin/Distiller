@@ -1,7 +1,6 @@
 module Term where
 
 import Control.Monad
-import Data.Char
 import Data.Foldable
 import Data.Functor.Identity
 import Data.List
@@ -68,7 +67,7 @@ eqTerm s1 s2 (Letrec _ xs t u, Letrec _ xs' t' u')
 eqTerm _ _ (_, _) = False
 
 -- context surrounding redex
-
+-- inner Context is a "parent" one for current
 data Context = EmptyCtx
              | ApplyCtx Context [Term]
              | CaseCtx Context [(String, [String], Term)]
@@ -636,11 +635,10 @@ unfold
    -> [(String, ([String], Term))]
    -> (Term, [(String, ([String], Term))])
 unfold (Apply t ts) fs d = let (t', d') = unfold t fs d in (Apply t' ts, d')
-unfold (Case t bs) fs d = let (t', d') = unfold t fs d in (Case t' bs, d')
-unfold (Fun f) _ d
-  = case lookup f d of
-        Just (xs, t) -> (foldr (\ x t' -> Lambda x (abstract t' x)) t xs, d)
-        Nothing -> error "unexpected Nothing in unfold"
+unfold (Case  t bs) fs d = let (t', d') = unfold t fs d in (Case  t' bs, d')
+unfold (Fun   f   ) _  d = case lookup f d of
+  Just (xs, t) -> (foldr (\ x t' -> Lambda x (abstract t' x)) t xs, d)
+  Nothing      -> error "unexpected Nothing in unfold"
 unfold (Let _ t u) fs d = unfold (subst t u) fs d
 unfold (Letrec f xs t u) fs d
   = let f' = rename fs f

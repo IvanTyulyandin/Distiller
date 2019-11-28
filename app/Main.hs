@@ -20,13 +20,20 @@ command str
   = let res = words str in
       case res of
           [":load", f] -> Load f
+          [":l", f] -> Load f
           [":prog"] -> Prog
+          [":p"] -> Prog
           [":term"] -> Term
+          [":t"] -> Term
           [":eval"] -> Eval
+          [":e"] -> Eval
           [":sc"] -> SuperCompile
           [":distill"] -> Distill
+          [":d"] -> Distill
           [":quit"] -> Quit
+          [":q"] -> Quit
           [":help"] -> Help
+          [":h"] -> Help
           _ -> Unknown
 
 helpMessage :: String

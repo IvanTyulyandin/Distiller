@@ -30,9 +30,9 @@ data Term = Free VarName                           -- free variable
 instance Show Term where
         show t = render $ prettyTerm t
 
-type Prog = (Term, [(String, ([String], Term))])
+type Prog = (Term, [(FuncName, ([VarName], Term))])
 
-showProg :: (Term, [(String, ([String], Term))]) -> String
+showProg :: (Term, [(FuncName, ([VarName], Term))]) -> String
 showProg p = render $ prettyProg p
 
 -- equality of terms
@@ -67,10 +67,10 @@ eqTerm s1 s2 (Letrec _ xs t u, Letrec _ xs' t' u')
 eqTerm _ _ (_, _) = False
 
 -- context surrounding redex
--- inner Context is a "parent" one for current
+-- Note: inner Context is a "parent" one for current
 data Context = EmptyCtx
              | ApplyCtx Context [Term]
-             | CaseCtx Context [(String, [String], Term)]
+             | CaseCtx Context [(ConName, [VarName], Term)]
 
 -- place term in context
 place :: Term -> Context -> Term
@@ -78,11 +78,11 @@ place t EmptyCtx = t
 place t (ApplyCtx k ts) = place (Apply t ts) k
 place t (CaseCtx k bs) = place (Case t bs) k
 
-match :: (Eq a1, Foldable t1, Foldable t2) 
-   => [(a1, t1 a2, c1)] -> [(a1, t2 a3, c2)] 
-   -> Bool
+-- Note: compare two case branches lists
+match :: [(ConName, [VarName], Term)] -> [(ConName, [VarName], Term)] -> Bool
 match bs bs'
   = length bs == length bs' &&
+      -- Q: should one compare terms inside bs and bs'?
       all (\ ((c, xs, _), (c', xs', _)) -> c == c' && length xs == length xs')
         (zip bs bs')
 
@@ -143,8 +143,11 @@ inst' s1 s2 (Free x) t s
   | x `elem` fst (unzip s1) =
     inst' [] [] (instantiate s1 (Free x)) (instantiate s2 t) s
 inst' _ _ (Free x) t s
-  = if x `elem` fst (unzip s) then if (x, t) `elem` s then Just s else Nothing
-      else Just ((x, t) : s)
+  = if x `elem` fst (unzip s)
+    then if (x, t) `elem` s
+         then Just s
+         else Nothing
+    else Just ((x, t) : s)
 inst' _ _ (Bound i) (Bound i') s | i == i' = Just s
 inst' s1 s2 (Lambda _ t) (Lambda _ t') s = inst' s1 s2 t t' s
 inst' s1 s2 (Con c ts) (Con c' ts') s
@@ -356,7 +359,7 @@ generalise' s1 s2 t u fv bv g1 g2
                        (makeApplication (Free x) (map Free xs), (x, t') : g1,
                         (x, u') : g2)
 
-makeLet :: Foldable t => t (String, Term) -> Term -> Term
+makeLet :: [(String, Term)] -> Term -> Term
 makeLet s t = foldl (\ u (x, t') -> Let x t' (abstract u x)) t s
 
 makeApplication :: Term -> [Term] -> Term
@@ -409,10 +412,10 @@ eval (Bound _) _ _ _ _ =
   error "unexpected call: eval (Bound _) _ _ _ _"
 
 -- free variables in a term
-free :: Term -> [String]
+free :: Term -> [VarName]
 free t = free' t []
 
--- Note: Free may be inserted with function abstract
+-- Note: (Free _) may be inserted with function abstract
 free' :: Term -> [VarName] -> [VarName]
 free' (Free x) xs = if x `elem` xs then xs else x : xs
 free' (Bound _) xs = xs
@@ -429,53 +432,56 @@ funs :: Term -> [FuncName]
 funs = funs' []
 
 funs' :: [FuncName] -> Term -> [FuncName]
-funs' fs (Free _) = fs
-funs' fs (Bound _) = fs
-funs' fs (Lambda _ t) = funs' fs t
-funs' fs (Con _ ts) = foldl funs' fs ts
-funs' fs (Apply t ts) = foldl funs' (funs' fs t) ts
-funs' fs (Fun f) = if f `elem` fs then fs else (f : fs)
-funs' fs (Case t bs) = foldl (\ _ (_, _, t') -> funs' fs t') (funs' fs t) bs
-funs' fs (Let _ t u) = funs' (funs' fs t) u
+funs' fs (Free _)         = fs
+funs' fs (Bound _)        = fs
+funs' fs (Lambda _ t)     = funs' fs t
+funs' fs (Con _ ts)       = foldl funs' fs ts
+funs' fs (Apply t ts)     = foldl funs' (funs' fs t) ts
+funs' fs (Fun f)          = if f `elem` fs then fs else (f : fs)
+funs' fs (Case t bs)      = foldl (\ _ (_, _, t') -> funs' fs t') (funs' fs t) bs
+funs' fs (Let _ t u)      = funs' (funs' fs t) u
 funs' fs (Letrec _ _ t u) = funs' (funs' fs t) u
 
 -- shift global de Bruijn indices by i, where current depth is d
-shift ::Int -> Term -> Term
+shift :: Int -> Term -> Term
 shift = shift' 0
 
-shift' :: Int -> Int -> Term -> Term
-shift' _ 0 u = u
-shift' _ _ (Free x) = Free x
-shift' d i (Bound i') = if i' >= d then Bound (i' + i) else Bound i'
+shift' :: DeBruijnIndex -> Int -> Term -> Term
+shift' _ 0 u            = u
+shift' _ _ (Free x)     = Free x
+shift' d i (Bound i')   = if i' >= d then Bound (i' + i) else Bound i'
 shift' d i (Lambda x t) = Lambda x (shift' (d + 1) i t)
-shift' d i (Con c ts) = Con c (map (shift' d i) ts)
-shift' _ _ (Fun f) = Fun f
+shift' d i (Con c ts)   = Con c (map (shift' d i) ts)
+shift' _ _ (Fun f)      = Fun f
 shift' d i (Apply t ts) = Apply (shift' d i t) (map (shift' d i) ts)
 shift' d i (Case t bs)
   = Case (shift' d i t)
       (map (\ (c, xs, t') -> (c, xs, shift' (d + length xs) i t')) bs)
-shift' d i (Let x t u) = Let x (shift' d i t) (shift' (d + 1) i u)
+shift' d i (Let x t u)  = Let x (shift' d i t) (shift' (d + 1) i u)
 shift' d i (Letrec f xs t u)
   = Letrec f xs (shift' (d + 1 + length xs) i t) (shift' (d + 1) i u)
 
 -- substitute term t for variable with de Bruijn index i
+-- Note: top level substitute — first term into second
 subst :: Term -> Term -> Term
 subst = subst' 0
 
 subst' :: DeBruijnIndex -> Term -> Term -> Term
 subst' _ _ (Free x) = Free x
 subst' i t (Bound i')
-  | i' < i = Bound i'
-  | i' == i = shift i t
+  | i' < i    = Bound i'
+  -- Note: looks like term \x -> x y
+  --       will be Lambda x ((Bound x) (Bound y))
+  | i' == i   = shift i t
   | otherwise = Bound (i' - 1)
 subst' i t (Lambda x t') = Lambda x (subst' (i + 1) t t')
-subst' i t (Con c ts) = Con c (map (subst' i t) ts)
-subst' _ _ (Fun f) = Fun f
+subst' i t (Con c ts)    = Con c (map (subst' i t) ts)
+subst' _ _ (Fun f)       = Fun f
 subst' i t (Apply t' ts) = Apply (subst' i t t') (map (subst' i t) ts)
 subst' i t (Case t' bs)
   = Case (subst' i t t')
       (map (\ (c, xs, u) -> (c, xs, subst' (i + length xs) t u)) bs)
-subst' i t (Let x t' u) = Let x (subst' i t t') (subst' (i + 1) t u)
+subst' i t (Let x t' u)  = Let x (subst' i t t') (subst' (i + 1) t u)
 subst' i t (Letrec f xs t' u)
   = Letrec f xs (subst' (i + 1 + length xs) t t') (subst' (i + 1) t u)
 
@@ -488,10 +494,10 @@ instantiate' d s (Free x)
   = case lookup x s of
         Just t -> shift d t
         Nothing -> Free x
-instantiate' _ _ (Bound i) = Bound i
+instantiate' _ _ (Bound i)    = Bound i
 instantiate' d s (Lambda x t) = Lambda x (instantiate' (d + 1) s t)
-instantiate' d s (Con c ts) = Con c (map (instantiate' d s) ts)
-instantiate' _ _ (Fun f) = Fun f
+instantiate' d s (Con c ts)   = Con c (map (instantiate' d s) ts)
+instantiate' _ _ (Fun f)      = Fun f
 instantiate' d s (Apply t ts)
   = Apply (instantiate' d s t) (map (instantiate' d s) ts)
 instantiate' d s (Case t bs)
@@ -567,18 +573,20 @@ abstractFun' i (Letrec f' xs t u) f
       (abstractFun' (i + 1) u f)
 
 -- replace de Bruijn index 0 with function f
-concreteFun :: String -> Term -> Term
+-- Note: top level f substitution,
+--       implicitly removes lambda
+concreteFun :: FuncName -> Term -> Term
 concreteFun = concreteFun' 0
 
-concreteFun' :: Int -> String -> Term -> Term
+concreteFun' :: DeBruijnIndex -> FuncName -> Term -> Term
 concreteFun' _ _ (Free x) = Free x
 concreteFun' i f (Bound i')
-  | i' < i = Bound i'
-  | i' == i = Fun f
+  | i' < i    = Bound i'
+  | i' == i   = Fun f
   | otherwise = Bound (i' - 1)
 concreteFun' i f (Lambda x t) = Lambda x (concreteFun' (i + 1) f t)
-concreteFun' i f (Con c ts) = Con c (map (concreteFun' i f) ts)
-concreteFun' _ _ (Fun f') = Fun f'
+concreteFun' i f (Con c ts)   = Con c (map (concreteFun' i f) ts)
+concreteFun' _ _ (Fun f')     = Fun f'
 concreteFun' i f (Apply t ts)
   = Apply (concreteFun' i f t) (map (concreteFun' i f) ts)
 concreteFun' i f (Case t bs)
@@ -590,7 +598,7 @@ concreteFun' i f (Letrec f' xs t u)
   = Letrec f' xs (concreteFun' (i + 1 + length xs) f t)
       (concreteFun' (i + 1) f u)
 
-rename :: Foldable t => t String -> String -> String
+rename :: [VarName] -> VarName -> VarName
 rename fv x = if x `elem` fv then rename fv (x ++ "'") else x
 
 -- rename a term t using renaming r
@@ -629,11 +637,9 @@ args _ =
   error "unexpected call: args _"
 
 -- unfold function
-unfold
-   :: Term
-   -> [String]
-   -> [(String, ([String], Term))]
-   -> (Term, [(String, ([String], Term))])
+unfold :: Term -> [String] -> [(FuncName, ([VarName], Term))]
+    -> (Term, [(FuncName, ([VarName], Term))])
+-- Q: should one unfold ts and bs in Apply and Case?
 unfold (Apply t ts) fs d = let (t', d') = unfold t fs d in (Apply t' ts, d')
 unfold (Case  t bs) fs d = let (t', d') = unfold t fs d in (Case  t' bs, d')
 unfold (Fun   f   ) _  d = case lookup f d of
@@ -644,7 +650,7 @@ unfold (Letrec f xs t u) fs d
   = let f' = rename fs f
         t' = concreteFun f' (foldr concrete t xs)
         u' = concreteFun f' u
-      in unfold u' (f' : fs) ((f', (xs, t')) : d)
+    in unfold u' (f' : fs) ((f', (xs, t')) : d)
 unfold t _ d = (t, d)
 
 -- pretty printing
@@ -653,7 +659,7 @@ stripLambda :: Term -> ([String], Term)
 stripLambda (Lambda x t)
   = let x' = rename (free t) x
         (xs, u) = stripLambda $ concrete x' t
-      in (x' : xs, u)
+    in (x' : xs, u)
 stripLambda t = ([], t)
 
 blank :: Doc
@@ -718,16 +724,18 @@ prettyAtom t@(Con c ts)
 prettyAtom (Fun f) = text f
 prettyAtom t = parens $ prettyTerm t
 
-prettyProg :: (Term, [(String, ([String], Term))]) -> P.Doc
+prettyProg :: (Term, [(FuncName, ([VarName], Term))]) -> P.Doc
 prettyProg (t, d) = prettyProg' (("main", ([], t)) : d)
 
-prettyProg' :: [(String, ([String], Term))] -> P.Doc
+prettyProg' :: [(FuncName, ([VarName], Term))] -> P.Doc
 prettyProg' [] = empty
 prettyProg' [(f, (xs, t))]
   = text f <+> hsep (map text xs) <+> equals <+> prettyTerm t
 prettyProg' ((f, (xs, t)) : fs)
   = text f <+> hsep (map text xs) <+> equals <+> prettyTerm t <> semi $$
       prettyProg' fs
+
+-- Note: lists, bools and ints are hardcoded
 
 isList :: Term -> Bool
 isList (Con "Nil" []) = True
@@ -802,12 +810,16 @@ reservedOp = T.reservedOp lexer
 natural :: ParsecT String u Identity Integer
 natural = T.natural lexer
 
-makeFuns :: [(String, (a, Term))] -> [(String, (a, Term))]
+-- Note: seems that during parsing source code
+--       all user-defined calls are parsed as free variables.
+--       This function subtitutes (Fun x) instead (Free x),
+--       if x was defined in fs — function definitions.
+makeFuns :: [(FuncName, ([VarName], Term))] -> [(FuncName, ([VarName], Term))]
 makeFuns ds
   = let fs = fst (unzip ds) in
       map (\ (f, (xs, t)) -> (f, (xs, makeFuns' fs t))) ds
 
-makeFuns' :: Foldable t => t String -> Term -> Term
+makeFuns' :: [FuncName] -> Term -> Term
 makeFuns' fs (Free x) = if x `elem` fs then Fun x else Free x
 makeFuns' _ (Bound i) = Bound i
 makeFuns' fs (Lambda x t) = Lambda x (makeFuns' fs t)

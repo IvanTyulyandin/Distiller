@@ -58,20 +58,21 @@ main = toplevel Nothing Nothing
 
 toplevel :: Maybe Prog -> Maybe String -> IO ()
 toplevel p fileName =
-  let g [] _ ds s =
+  let -- g :: Imports -> _ -> _ -> Previously loaded file
+      g [] _ ds prevLoaded =
         let ds' = makeFuns ds in
           case lookup "main" ds' of
             Nothing -> do putStrLn "No main function"
                           toplevel Nothing fileName
-            Just (_, t) -> toplevel (Just (t, ds')) (Just s)
-      g (y : ys) zs ds s =
+            Just (_, t) -> toplevel (Just (t, ds')) (Just prevLoaded)
+      g (y : ys) zs ds prevLoaded =
         if y `elem` zs
-        then g ys zs ds s
+        then g ys zs ds prevLoaded
         else do r <- loadFile y
                 case r of
-                  Nothing -> toplevel Nothing (Just s)
+                  Nothing -> toplevel Nothing (Just prevLoaded)
                   Just (fs, ds2) ->
-                    g (ys ++ fs) (y : zs) (ds ++ ds2) s
+                    g (ys ++ fs) (y : zs) (ds ++ ds2) prevLoaded
       printFail = do
         putStrLn "No program loaded"
         toplevel p fileName

@@ -11,14 +11,12 @@ import Term
 super
    :: Term      -- term t
    -> Context   -- Context
-   -> [VarName]  -- free variables in t
+   -> [VarName] -- free variables in t
    -- process tree (a part of it that is needed for folding etc)
    -> [(FuncName, ([VarName], Term))]
    -- user-defined definitions (name, vars, body)
    -> [(FuncName, ([VarName], Term))]
    -> Exception (String, Term) Term
--- Note: seems like optimisation, but not sure
---       if this situation should be possible
 super t (ApplyCtx k []) fv m d = super t k fv m d
 super (Free x) (CaseCtx k bs) fv m d =
   do bs' <- mapM
@@ -26,9 +24,11 @@ super (Free x) (CaseCtx k bs) fv m d =
                 let t'    = place t k
                     fv'   = foldr (\ x' fvs -> let x'' = rename fvs x' in x'' : fvs) fv conVars
                     vars' = take (length conVars) fv'
+                    -- Note: looks like positive info propagation, x = Con conName vars' in t'
                     u     = subst (Con conName (map Free vars'))
                               (abstract (foldr concrete t' vars') x)
-                in do u' <- super u EmptyCtx fv' m d
+                in do -- Q: why supercompiling u instead of t{x := Con conName vars'}?
+                      u' <- super u EmptyCtx fv' m d
                       return (conName, conVars, foldl abstract u' vars'))
               bs
      return (Case (Free x) bs')
@@ -60,9 +60,8 @@ super (Con c ts) (CaseCtx k bs) fv m d
   = case find (\ (c', xs, _) -> c == c' && length xs == length ts) bs of
       Nothing -> error ("No matching pattern in case for term:\n\n" ++
                         show (Case (Con c ts) bs))
-      -- Q: is k equal to EmptyCtx?
       Just (_, _, t) -> super (foldr subst t ts) k fv m d
--- non used-refined function call then supercompile context
+-- non used-defined function call then supercompile context
 super (Fun f) k fv m d | f `notElem` fst (unzip d) = superCtx (Fun f) k fv m d
 -- user-defined function call
 super (Fun f) k fv m d =
@@ -87,7 +86,7 @@ super (Fun f) k fv m d =
                         -- define new handler that "catches" an exception
                         -- if function names are equal
                         handler (f', t1) = if renf == f'
-                                                -- chatch an exception and generalize
+                                                -- catch an exception and generalize
                                                 -- i.e. abstract(_up) and rebuild the tree
                                            then let (t2, s1, _) = generalise t t1
                                                 in  super (makeLet s1 t2) EmptyCtx fv m d
